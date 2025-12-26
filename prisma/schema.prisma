@@ -1,0 +1,192 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// Git credentials for accessing repositories
+model Credential {
+  id           String       @id @default(cuid())
+  name         String       // Display name (e.g., "Work GitHub")
+  type         CredentialType
+  username     String?
+  token        String       @db.Text // Encrypted PAT or SSH key
+  sshKeyPath   String?      // Path to SSH key if using SSH
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  
+  repositories Repository[]
+  
+  @@index([type])
+}
+
+enum CredentialType {
+  PAT       // Personal Access Token
+  SSH       // SSH Key
+  OAUTH     // OAuth token
+}
+
+// Git repositories to analyze
+model Repository {
+  id           String      @id @default(cuid())
+  name         String      // Display name
+  url          String      // Git remote URL
+  branch       String      @default("main")
+  localPath    String?     // Local clone path
+  credentialId String?
+  credential   Credential? @relation(fields: [credentialId], references: [id])
+  lastSyncAt   DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  
+  commits      Commit[]
+  
+  @@unique([url, branch])
+  @@index([credentialId])
+}
+
+// Parsed git commits
+model Commit {
+  id            String     @id @default(cuid())
+  repositoryId  String
+  repository    Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  
+  // Git data
+  sha           String     @db.VarChar(40)
+  authorName    String
+  authorEmail   String
+  commitDate    DateTime
+  message       String     @db.Text // Full commit message
+  messageTitle  String     // First line of commit message
+  
+  // Parsed data
+  filesChanged  Int        @default(0)
+  insertions    Int        @default(0)
+  deletions     Int        @default(0)
+  diffSummary   String?    @db.MediumText // Raw diff stats
+  
+  // AI-generated content
+  summary       String?    @db.Text // Human-readable summary
+  summaryStatus SummaryStatus @default(PENDING)
+  
+  // Related assets
+  zipFileKey    String?    // S3 key for zip of changed files
+  zipFileSize   Int?       // Size in bytes
+  
+  // Optional integrations
+  jiraKey       String?    // Extracted JIRA ticket (e.g., PROJ-123)
+  jiraUrl       String?    // Full JIRA URL
+  
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  
+  changedFiles  ChangedFile[]
+  
+  @@unique([repositoryId, sha])
+  @@index([repositoryId, commitDate])
+  @@index([authorEmail])
+  @@index([jiraKey])
+}
+
+enum SummaryStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// Individual files changed in a commit
+model ChangedFile {
+  id         String    @id @default(cuid())
+  commitId   String
+  commit     Commit    @relation(fields: [commitId], references: [id], onDelete: Cascade)
+  
+  filePath   String    @db.VarChar(500)
+  changeType ChangeType
+  additions  Int       @default(0)
+  deletions  Int       @default(0)
+  patch      String?   @db.MediumText // Actual diff content
+  
+  @@index([commitId])
+  @@index([filePath(length: 255)])
+}
+
+enum ChangeType {
+  ADDED
+  MODIFIED
+  DELETED
+  RENAMED
+  COPIED
+}
+
+// Export job tracking
+model ExportJob {
+  id          String       @id @default(cuid())
+  status      ExportStatus @default(PENDING)
+  
+  // Filter criteria
+  startDate   DateTime?
+  endDate     DateTime?
+  authorEmail String?
+  repoIds     String?      @db.Text // JSON array of repo IDs
+  
+  // Output
+  fileName    String?
+  fileKey     String?      // S3 key
+  fileSize    Int?
+  rowCount    Int?
+  
+  // Progress tracking
+  progress    Int          @default(0) // 0-100
+  error       String?      @db.Text
+  
+  createdAt   DateTime     @default(now())
+  completedAt DateTime?
+  
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum ExportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// Analysis job for processing repositories
+model AnalysisJob {
+  id           String         @id @default(cuid())
+  repositoryId String
+  status       AnalysisStatus @default(PENDING)
+  
+  // Date range to analyze
+  startDate    DateTime?
+  endDate      DateTime?
+  authorFilter String?        // Filter by author email
+  
+  // Progress
+  totalCommits   Int          @default(0)
+  processedCommits Int        @default(0)
+  
+  error        String?        @db.Text
+  
+  createdAt    DateTime       @default(now())
+  completedAt  DateTime?
+  
+  @@index([repositoryId])
+  @@index([status])
+}
+
+enum AnalysisStatus {
+  PENDING
+  CLONING
+  FETCHING
+  PARSING
+  SUMMARIZING
+  COMPLETED
+  FAILED
+}

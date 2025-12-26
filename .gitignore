@@ -1,0 +1,17 @@
+node_modules/
+.next/
+.env
+.env.local
+*.log
+
+# Rust
+rust-service/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
