@@ -53,10 +53,8 @@ if [ ! -d "node_modules" ]; then
 fi
 
 # Check if Prisma client is generated
-if [ ! -d "node_modules/.prisma" ]; then
-    echo -e "\n${YELLOW}🗄️  Generating Prisma client...${NC}"
-    pnpm db:generate
-fi
+echo -e "\n${YELLOW}🗄️  Generating Prisma client...${NC}"
+pnpm db:generate
 
 # Build Rust service if needed
 RUST_BINARY="rust-service/target/release/git-doc-service"
@@ -65,17 +63,20 @@ if [ ! -f "$RUST_BINARY" ]; then
     cd rust-service
     cargo build --release
     cd ..
+else
+    echo -e "\n${GREEN}🦀 Rust binary exists${NC}"
 fi
 
 # Create logs directory
 mkdir -p logs
 
+# Clear old rust service logs but keep start script output separate
+> logs/rust-service.log
+
 # Start Rust backend
 echo -e "\n${YELLOW}🚀 Starting Rust backend (port 8080)...${NC}"
-cd rust-service
-cargo run --release > ../logs/rust.log 2>&1 &
+./rust-service/target/release/git-doc-service > logs/rust-service.log 2>&1 &
 RUST_PID=$!
-cd ..
 echo -e "${GREEN}   ✓ Rust backend started (PID: $RUST_PID)${NC}"
 
 # Wait for Rust to be ready
@@ -118,7 +119,7 @@ echo -e "\n${BLUE}Frontend:${NC} http://localhost:3000"
 echo -e "${BLUE}Backend:${NC}  http://localhost:8080"
 echo -e "\n${YELLOW}Logs:${NC}"
 echo -e "  - Next.js: tail -f logs/next.log"
-echo -e "  - Rust:    tail -f logs/rust.log"
+echo -e "  - Rust:    tail -f logs/rust-service.log"
 echo -e "\n${YELLOW}To stop:${NC} ./stop.sh or press Ctrl+C"
 echo ""
 

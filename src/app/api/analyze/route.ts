@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Repository not found' }, { status: 404 })
     }
     console.log('[API /analyze POST] Found repository:', repository.name, repository.url)
+    console.log('[API /analyze POST] Credential:', repository.credential?.id, 'Token present:', !!repository.credential?.token)
 
     // Create analysis job
     const job = await prisma.analysisJob.create({
@@ -71,7 +72,7 @@ export async function POST(request: NextRequest) {
       })
 
     return NextResponse.json({
-      jobId: job.id,
+      id: job.id,
       status: job.status,
       message: 'Analysis job started',
     })

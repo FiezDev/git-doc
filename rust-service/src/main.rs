@@ -21,6 +21,15 @@ mod zip_creator;
 use git::GitProcessor;
 use s3::S3Client;
 
+// Helper to sanitize strings for MySQL (remove null bytes and limit size)
+fn sanitize_for_mysql(s: &str, max_len: usize) -> String {
+    let cleaned: String = s.chars()
+        .filter(|c| *c != '\0') // Remove null bytes
+        .take(max_len)
+        .collect();
+    cleaned
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: sqlx::MySqlPool,
@@ -107,6 +116,8 @@ async fn analyze_repository(
     Json(request): Json<AnalyzeRequest>,
 ) -> Result<Json<AnalyzeResponse>, (StatusCode, String)> {
     tracing::info!("Starting analysis for job: {}", request.job_id);
+    tracing::info!("Repo URL: {}, Branch: {}", request.repo_url, request.branch);
+    tracing::info!("Token present: {}", request.credential_token.is_some());
 
     // Update job status to CLONING
     sqlx::query("UPDATE AnalysisJob SET status = 'CLONING' WHERE id = ?")
@@ -227,12 +238,12 @@ async fn process_analysis(state: AppState, request: AnalyzeRequest) -> Result<()
         .bind(&commit.author_name)
         .bind(&commit.author_email)
         .bind(&commit.commit_date)
-        .bind(&commit.message)
-        .bind(&commit.message_title)
+        .bind(sanitize_for_mysql(&commit.message, 65000))
+        .bind(sanitize_for_mysql(&commit.message_title, 500))
         .bind(commit.files_changed as i32)
         .bind(commit.insertions as i32)
         .bind(commit.deletions as i32)
-        .bind(&commit.diff_summary)
+        .bind(sanitize_for_mysql(&commit.diff_summary, 65000))
         .bind(&zip_key)
         .bind(commit.zip_size.map(|s| s as i32))
         .bind(&jira_key)
@@ -250,11 +261,11 @@ async fn process_analysis(state: AppState, request: AnalyzeRequest) -> Result<()
             )
             .bind(uuid::Uuid::new_v4().to_string())
             .bind(&commit.id)
-            .bind(&file.path)
+            .bind(sanitize_for_mysql(&file.path, 1000))
             .bind(&file.change_type)
             .bind(file.additions as i32)
             .bind(file.deletions as i32)
-            .bind(&file.patch)
+            .bind(file.patch.as_ref().map(|p| sanitize_for_mysql(p, 65000)))
             .execute(&state.db)
             .await?;
         }

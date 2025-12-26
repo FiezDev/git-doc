@@ -53,13 +53,15 @@ impl GitProcessor {
         let mut callbacks = RemoteCallbacks::new();
 
         if let Some(token) = token {
+            tracing::info!("Using token for authentication (length: {})", token.len());
             let token = token.to_string();
-            callbacks.credentials(move |_url, username_from_url, _allowed_types| {
-                Cred::userpass_plaintext(
-                    username_from_url.unwrap_or("git"),
-                    &token,
-                )
+            callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
+                // For GitHub PATs, use "x-access-token" as username and token as password
+                // This works for both classic PATs and fine-grained tokens
+                Cred::userpass_plaintext("x-access-token", &token)
             });
+        } else {
+            tracing::warn!("No token provided, cloning without authentication");
         }
 
         let mut fetch_options = FetchOptions::new();
@@ -69,9 +71,14 @@ impl GitProcessor {
         builder.fetch_options(fetch_options);
         builder.branch(branch);
 
-        builder
-            .clone(url, path)
-            .context("Failed to clone repository")?;
+        let clone_result = builder.clone(url, path);
+        
+        match &clone_result {
+            Ok(_) => tracing::info!("Successfully cloned repository"),
+            Err(e) => tracing::error!("Git clone error: {} (class: {:?}, code: {:?})", e.message(), e.class(), e.code()),
+        }
+        
+        clone_result.context(format!("Failed to clone repository: {}", url))?;
 
         Ok(())
     }
@@ -82,11 +89,8 @@ impl GitProcessor {
         let mut callbacks = RemoteCallbacks::new();
         if let Some(token) = token {
             let token = token.to_string();
-            callbacks.credentials(move |_url, username_from_url, _allowed_types| {
-                Cred::userpass_plaintext(
-                    username_from_url.unwrap_or("git"),
-                    &token,
-                )
+            callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
+                Cred::userpass_plaintext("x-access-token", &token)
             });
         }
 
