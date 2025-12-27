@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
 
     const commits = await prisma.commit.findMany({
       where,
-      take: 50, // Limit batch size
+      take: 10, // Small batch to respect rate limits
       orderBy: { commitDate: 'desc' },
     })
 
@@ -39,11 +39,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'No commits need summarization', count: 0 })
     }
 
-    // Generate summaries
+    // Generate summaries with rate limit handling
     let successCount = 0
     let failCount = 0
+    let rateLimited = false
 
     for (const commit of commits) {
+      // If we hit rate limit, stop processing more
+      if (rateLimited) break
+
       try {
         await prisma.commit.update({
           where: { id: commit.id },
@@ -56,6 +60,17 @@ export async function POST(request: NextRequest) {
           filesChanged: commit.filesChanged,
         })
 
+        // Check if rate limited
+        if (summary.includes('Rate limited')) {
+          // Revert to PENDING so it can be retried
+          await prisma.commit.update({
+            where: { id: commit.id },
+            data: { summaryStatus: 'PENDING' },
+          })
+          rateLimited = true
+          continue
+        }
+
         await prisma.commit.update({
           where: { id: commit.id },
           data: {
@@ -65,6 +80,9 @@ export async function POST(request: NextRequest) {
         })
 
         successCount++
+        
+        // Add delay between requests to avoid rate limits (free tier: 15 req/min)
+        await new Promise(resolve => setTimeout(resolve, 4500))
       } catch (error) {
         console.error(`Failed to summarize commit ${commit.id}:`, error)
         await prisma.commit.update({
@@ -76,9 +94,10 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      message: 'Summarization complete',
+      message: rateLimited ? 'Rate limited - try again later' : 'Summarization complete',
       success: successCount,
       failed: failCount,
+      rateLimited,
     })
   } catch (error) {
     if (error instanceof z.ZodError) {

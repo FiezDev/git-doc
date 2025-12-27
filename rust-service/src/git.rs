@@ -152,14 +152,21 @@ impl GitProcessor {
                 }
             }
 
-            // Filter by author
+            // Filter by author (supports comma-separated list)
             let author = commit.author();
             let author_email = author.email().unwrap_or("");
             let author_name = author.name().unwrap_or("");
 
             if let Some(filter) = author_filter {
-                if !author_email.contains(filter) && !author_name.contains(filter) {
-                    continue;
+                // Split by comma for multiple authors
+                let filters: Vec<&str> = filter.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+                if !filters.is_empty() {
+                    let matches = filters.iter().any(|f| {
+                        author_email == *f || author_email.contains(f) || author_name.contains(f)
+                    });
+                    if !matches {
+                        continue;
+                    }
                 }
             }
 

@@ -47,6 +47,11 @@ Keep it simple and avoid technical jargon where possible. Reply in plain text on
 
     if (!response.ok) {
       const error = await response.text()
+      // Check if rate limited
+      if (response.status === 429 || error.includes('RESOURCE_EXHAUSTED')) {
+        console.warn('Gemini API rate limited, will retry later')
+        return 'Rate limited - please retry later'
+      }
       console.error('Gemini API error:', error)
       return 'Unable to generate summary'
     }

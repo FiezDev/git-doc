@@ -7,7 +7,8 @@ import { format } from 'date-fns'
 const exportSchema = z.object({
   startDate: z.string().optional(),
   endDate: z.string().optional(),
-  authorEmail: z.string().optional(),
+  authorEmail: z.string().optional(), // single author (legacy)
+  authorEmails: z.array(z.string()).optional(), // multiple authors
   repoIds: z.array(z.string()).optional(),
 })
 
@@ -19,13 +20,16 @@ export async function POST(request: NextRequest) {
 
     // Build query filter
     interface CommitWhereInput {
-      authorEmail?: { contains: string }
+      authorEmail?: { contains: string } | { in: string[] }
       commitDate?: { gte?: Date; lte?: Date }
       repositoryId?: { in: string[] }
     }
     const where: CommitWhereInput = {}
 
-    if (data.authorEmail) {
+    // Support multiple authors or single author (legacy)
+    if (data.authorEmails && data.authorEmails.length > 0) {
+      where.authorEmail = { in: data.authorEmails }
+    } else if (data.authorEmail) {
       where.authorEmail = { contains: data.authorEmail }
     }
 
