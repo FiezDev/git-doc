@@ -24,7 +24,7 @@ if [ -f .next.pid ]; then
 fi
 
 # Kill by port (fallback)
-lsof -ti:3000 | xargs kill -9 2>/dev/null || true
+lsof -ti:4000 | xargs kill -9 2>/dev/null || true
 lsof -ti:8080 | xargs kill -9 2>/dev/null || true
 
 # Kill by process name (fallback)

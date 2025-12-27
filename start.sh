@@ -27,10 +27,10 @@ echo -e "${BLUE}======================================${NC}"
 # Kill old processes
 echo -e "\n${YELLOW}🔪 Killing old processes...${NC}"
 
-# Kill Next.js (port 3000)
-if lsof -ti:3000 > /dev/null 2>&1; then
-    echo -e "   Killing process on port 3000 (Next.js)..."
-    kill -9 $(lsof -ti:3000) 2>/dev/null || true
+# Kill Next.js (port 4000)
+if lsof -ti:4000 > /dev/null 2>&1; then
+    echo -e "   Killing process on port 4000 (Next.js)..."
+    kill -9 $(lsof -ti:4000) 2>/dev/null || true
 fi
 
 # Kill Rust service (port 8080)
@@ -90,15 +90,15 @@ for i in {1..30}; do
 done
 
 # Start Next.js frontend
-echo -e "\n${YELLOW}🌐 Starting Next.js frontend (port 3000)...${NC}"
-pnpm dev > logs/next.log 2>&1 &
+echo -e "\n${YELLOW}🌐 Starting Next.js frontend (port 4000)...${NC}"
+pnpm dev -p 4000 > logs/next.log 2>&1 &
 NEXT_PID=$!
 echo -e "${GREEN}   ✓ Next.js started (PID: $NEXT_PID)${NC}"
 
 # Wait for Next.js to be ready
 echo -e "   Waiting for Next.js to be ready..."
 for i in {1..30}; do
-    if curl -s http://localhost:3000 > /dev/null 2>&1; then
+    if curl -s http://localhost:4000 > /dev/null 2>&1; then
         echo -e "${GREEN}   ✓ Next.js is ready${NC}"
         break
     fi
@@ -112,7 +112,7 @@ echo "$NEXT_PID" > .next.pid
 echo -e "\n${GREEN}======================================${NC}"
 echo -e "${GREEN}   ✅ All services started!${NC}"
 echo -e "${GREEN}======================================${NC}"
-echo -e "\n${BLUE}Frontend:${NC} http://localhost:3000"
+echo -e "\n${BLUE}Frontend:${NC} http://localhost:4000"
 echo -e "${BLUE}Backend:${NC}  http://localhost:8080"
 echo -e "\n${YELLOW}Logs:${NC}"
 echo -e "  - Next.js: tail -f logs/next.log"

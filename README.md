@@ -79,7 +79,7 @@ A tool to summarize your yearly git work across multiple repositories, generatin
    ```
 
 6. **Access the app**
-   Open http://localhost:3000
+   Open http://localhost:4000
 
 ## Workflow
 
