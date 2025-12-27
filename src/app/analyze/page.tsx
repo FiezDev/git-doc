@@ -17,13 +17,6 @@ interface AnalysisJob {
   error: string | null
 }
 
-interface SummarizeResult {
-  status: 'idle' | 'processing' | 'completed' | 'failed'
-  success: number
-  failed: number
-  total: number
-}
-
 interface Author {
   email: string
   name: string
@@ -42,12 +35,6 @@ export default function AnalyzePage() {
   const [authors, setAuthors] = useState<Author[]>([])
   const [loading, setLoading] = useState(false)
   const [job, setJob] = useState<AnalysisJob | null>(null)
-  const [summarize, setSummarize] = useState<SummarizeResult>({
-    status: 'idle',
-    success: 0,
-    failed: 0,
-    total: 0,
-  })
 
   useEffect(() => {
     fetch('/api/repos')
@@ -82,17 +69,9 @@ export default function AnalyzePage() {
     setEndDate(now.toISOString().split('T')[0])
   }, [])
 
-  // Poll job status and auto-summarize when parsing completes
+  // Poll job status
   useEffect(() => {
-    if (!job || job.status === 'FAILED') return
-    
-    // When COMPLETED, trigger summarization
-    if (job.status === 'COMPLETED' && summarize.status === 'idle') {
-      runSummarization()
-      return
-    }
-    
-    if (job.status === 'COMPLETED') return
+    if (!job || job.status === 'COMPLETED' || job.status === 'FAILED') return
 
     const interval = setInterval(async () => {
       const res = await fetch(`/api/analyze?jobId=${job.id}`)
@@ -105,60 +84,12 @@ export default function AnalyzePage() {
     }, 2000)
 
     return () => clearInterval(interval)
-  }, [job, summarize.status])
-
-  // Run AI summarization on pending commits
-  const runSummarization = async () => {
-    if (!selectedRepo) return
-    
-    setSummarize({ status: 'processing', success: 0, failed: 0, total: 0 })
-    
-    let totalSuccess = 0
-    let totalFailed = 0
-    let hasMore = true
-    
-    while (hasMore) {
-      try {
-        const res = await fetch('/api/summarize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ repoId: selectedRepo }),
-        })
-        
-        const data = await res.json()
-        totalSuccess += data.success || 0
-        totalFailed += data.failed || 0
-        
-        setSummarize({
-          status: 'processing',
-          success: totalSuccess,
-          failed: totalFailed,
-          total: totalSuccess + totalFailed,
-        })
-        
-        // Stop if rate limited or no more commits
-        if (data.rateLimited || (data.success || 0) + (data.failed || 0) === 0) {
-          hasMore = false
-        }
-      } catch (err) {
-        console.error('Summarization error:', err)
-        hasMore = false
-      }
-    }
-    
-    setSummarize({
-      status: 'completed',
-      success: totalSuccess,
-      failed: totalFailed,
-      total: totalSuccess + totalFailed,
-    })
-  }
+  }, [job])
 
   const handleAnalyze = async () => {
     if (!selectedRepo) return
 
     setLoading(true)
-    setSummarize({ status: 'idle', success: 0, failed: 0, total: 0 })
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
@@ -343,36 +274,12 @@ export default function AnalyzePage() {
             )}
 
             {job.status === 'COMPLETED' && (
-              <div className="mt-4 space-y-3">
-                {/* Summarization Progress */}
-                {summarize.status === 'processing' && (
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded text-blue-700 text-sm">
-                    <div className="flex items-center gap-2">
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      <span>🤖 Generating AI summaries... {summarize.success} completed</span>
-                    </div>
-                  </div>
-                )}
-                
-                {summarize.status === 'completed' && summarize.total > 0 && (
-                  <div className="p-3 bg-green-50 border border-green-200 rounded text-green-700 text-sm">
-                    ✨ AI summaries generated: {summarize.success} successful
-                    {summarize.failed > 0 && `, ${summarize.failed} failed`}
-                  </div>
-                )}
-                
-                {(summarize.status === 'completed' || summarize.total === 0) && (
-                  <div className="p-3 bg-green-50 border border-green-200 rounded text-green-600 text-sm">
-                    ✅ Analysis completed! You can now{' '}
-                    <a href="/exports/new" className="underline font-medium">
-                      generate an export
-                    </a>
-                    .
-                  </div>
-                )}
+              <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded text-green-600 text-sm">
+                ✅ Analysis completed! {job.processedCommits} commits parsed. You can now{' '}
+                <a href="/exports/new" className="underline font-medium">
+                  generate an export
+                </a>
+                .
               </div>
             )}
           </div>

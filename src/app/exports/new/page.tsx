@@ -13,12 +13,6 @@ interface Author {
   commitCount: number
 }
 
-interface SummarizeStatus {
-  pending: number
-  summarizing: boolean
-  lastResult?: { success: number; failed: number }
-}
-
 export default function NewExportPage() {
   const [repos, setRepos] = useState<Repository[]>([])
   const [selectedRepos, setSelectedRepos] = useState<string[]>([])
@@ -27,7 +21,6 @@ export default function NewExportPage() {
   const [selectedAuthors, setSelectedAuthors] = useState<string[]>([])
   const [authors, setAuthors] = useState<Author[]>([])
   const [loading, setLoading] = useState(false)
-  const [summarizeStatus, setSummarizeStatus] = useState<SummarizeStatus>({ pending: 0, summarizing: false })
   const [result, setResult] = useState<{
     exportId: string
     fileName: string
@@ -123,72 +116,6 @@ export default function NewExportPage() {
     }
   }
 
-  // Check for pending summaries
-  const checkPendingSummaries = async () => {
-    try {
-      const params = new URLSearchParams()
-      if (selectedRepos.length === 1) {
-        params.set('repoId', selectedRepos[0])
-      }
-      params.set('status', 'PENDING')
-      const res = await fetch(`/api/commits?${params.toString()}`)
-      const data = await res.json()
-      setSummarizeStatus(prev => ({ ...prev, pending: data.pagination?.total || 0 }))
-    } catch (err) {
-      console.error('Failed to check pending:', err)
-    }
-  }
-
-  // Run AI summarization
-  const runSummarization = async () => {
-    setSummarizeStatus(prev => ({ ...prev, summarizing: true }))
-    
-    let totalSuccess = 0
-    let totalFailed = 0
-    let hasMore = true
-    
-    while (hasMore) {
-      try {
-        const body: { repoId?: string } = {}
-        if (selectedRepos.length === 1) {
-          body.repoId = selectedRepos[0]
-        }
-        
-        const res = await fetch('/api/summarize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        
-        const data = await res.json()
-        totalSuccess += data.success || 0
-        totalFailed += data.failed || 0
-        
-        // Stop if rate limited or no more commits
-        if (data.rateLimited || (data.success || 0) + (data.failed || 0) === 0) {
-          hasMore = false
-        }
-      } catch (err) {
-        console.error('Summarization error:', err)
-        hasMore = false
-      }
-    }
-    
-    // Refresh pending count
-    await checkPendingSummaries()
-    
-    setSummarizeStatus(prev => ({
-      ...prev,
-      summarizing: false,
-      lastResult: { success: totalSuccess, failed: totalFailed },
-    }))
-  }
-
-  // Check pending on mount and when repos change
-  useEffect(() => {
-    checkPendingSummaries()
-  }, [selectedRepos])
-
   const toggleRepo = (repoId: string) => {
     setSelectedRepos((prev) =>
       prev.includes(repoId) ? prev.filter((id) => id !== repoId) : [...prev, repoId]
@@ -199,7 +126,7 @@ export default function NewExportPage() {
     <div className="max-w-2xl mx-auto space-y-6">
       <h1 className="text-3xl font-bold text-gray-900">Generate Excel Export</h1>
       <p className="text-gray-600">
-        Export your git commits to an Excel file with AI-generated summaries.
+        Export commits to Excel with a File Summary sheet showing changes per file over time.
       </p>
 
       <div className="bg-white p-6 rounded-lg shadow space-y-4">
@@ -314,46 +241,13 @@ export default function NewExportPage() {
           )}
         </div>
 
-        {/* Pending Summaries Alert */}
-        {summarizeStatus.pending > 0 && (
-          <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-yellow-800">
-                ⚠️ {summarizeStatus.pending} commits have pending AI summaries
-              </div>
-              <button
-                onClick={runSummarization}
-                disabled={summarizeStatus.summarizing}
-                className="px-3 py-1 text-xs font-medium text-yellow-800 bg-yellow-200 rounded hover:bg-yellow-300 disabled:opacity-50"
-              >
-                {summarizeStatus.summarizing ? 'Summarizing...' : '🤖 Generate Summaries'}
-              </button>
-            </div>
-          </div>
-        )}
-        
-        {summarizeStatus.summarizing && (
-          <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="flex items-center gap-2 text-sm text-blue-700">
-              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              <span>Generating AI summaries... This may take a moment.</span>
-            </div>
-          </div>
-        )}
-        
-        {summarizeStatus.lastResult && !summarizeStatus.summarizing && (
-          <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
-            ✅ Summarization complete: {summarizeStatus.lastResult.success} successful
-            {summarizeStatus.lastResult.failed > 0 && `, ${summarizeStatus.lastResult.failed} failed`}
-          </div>
-        )}
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+          📊 Export includes 2 sheets: <strong>Git Commits</strong> (raw data) and <strong>File Summary</strong> (changes per file over time)
+        </div>
 
         <button
           onClick={handleExport}
-          disabled={loading || summarizeStatus.summarizing}
+          disabled={loading}
           className="w-full px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-orange-600 hover:bg-orange-700 disabled:opacity-50"
         >
           {loading ? 'Generating...' : '📥 Generate Excel Export'}
@@ -362,41 +256,48 @@ export default function NewExportPage() {
 
       {result && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-6">
-          <h2 className="text-lg font-medium text-green-800 mb-4">✅ Export Ready!</h2>
-          <dl className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-gray-600">File Name:</dt>
-              <dd className="font-medium">{result.fileName}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-gray-600">Rows:</dt>
-              <dd className="font-medium">{result.rowCount} commits</dd>
-            </div>
-          </dl>
-          <a
-            href={result.downloadUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-4 block w-full text-center px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-green-600 hover:bg-green-700"
-          >
-            📥 Download Excel File
-          </a>
+          <h2 className="text-lg font-medium text-green-800 mb-4">✅ Export Downloaded!</h2>
+          <p className="text-sm text-green-700">
+            File <strong>{result.fileName}</strong> has been downloaded to your computer.
+          </p>
         </div>
       )}
 
-      {/* Excel Column Preview */}
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Excel Columns</h2>
-        <ul className="text-sm text-gray-600 space-y-1">
-          <li>📅 <strong>Date/Time</strong> - When the commit was created</li>
-          <li>📁 <strong>Repository</strong> - Which repo the commit belongs to</li>
-          <li>📝 <strong>Summary of Change</strong> - AI-generated human-readable summary</li>
-          <li>🏷️ <strong>Commit Name</strong> - First line of commit message</li>
-          <li>📄 <strong>Commit Description</strong> - Full commit message</li>
-          <li>💻 <strong>Code Change Summary</strong> - Files changed with additions/deletions</li>
-          <li>📦 <strong>Code Zip Link</strong> - Download link for changed files</li>
-          <li>🔗 <strong>JIRA Link</strong> - Extracted JIRA ticket URL (if found)</li>
-        </ul>
+      {/* Excel Sheet Preview */}
+      <div className="bg-white p-6 rounded-lg shadow space-y-4">
+        <h2 className="text-lg font-medium text-gray-900">📊 Export Contents</h2>
+        
+        <div>
+          <h3 className="text-md font-medium text-blue-700 mb-2">Sheet 1: Git Commits</h3>
+          <ul className="text-sm text-gray-600 space-y-1 ml-4">
+            <li>📅 Date/Time</li>
+            <li>📁 Repository</li>
+            <li>🏷️ Commit Name</li>
+            <li>📄 Commit Description</li>
+            <li>💻 Commit Code (SHA)</li>
+            <li>📂 Changed Files</li>
+            <li>🔢 Files Count</li>
+            <li>🔗 JIRA Link</li>
+            <li>👤 Author</li>
+          </ul>
+        </div>
+        
+        <div>
+          <h3 className="text-md font-medium text-green-700 mb-2">Sheet 2: File Summary</h3>
+          <p className="text-sm text-gray-600 mb-2">Groups all changes by file path showing version history:</p>
+          <div className="text-sm bg-gray-50 p-3 rounded border font-mono">
+            <div className="text-gray-800">
+              <strong>File</strong>: /src/app/page.tsx<br/>
+              <strong>Changes</strong>:<br/>
+              &nbsp;&nbsp;27/12/2025<br/>
+              &nbsp;&nbsp;- feat: add new component<br/>
+              &nbsp;&nbsp;- fix: button styling<br/>
+              <br/>
+              &nbsp;&nbsp;25/12/2025<br/>
+              &nbsp;&nbsp;- initial page setup
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

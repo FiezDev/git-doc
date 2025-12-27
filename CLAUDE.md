@@ -1,66 +1,82 @@
 # Git Work Summarizer - Project Instructions
 
 ## Overview
-A tool to summarize yearly git work across multiple repositories, generating Excel reports with AI-powered summaries.
+A tool to summarize yearly git work across multiple repositories, generating Excel reports with file-based change history.
 
 ## Tech Stack
-- **Frontend/API**: Next.js 14 (App Router)
-- **Backend Processing**: Rust (git operations, file processing)
+- **Frontend/API**: Next.js 14 (App Router) - Port 4000
+- **Backend Processing**: Rust (git operations) - Port 8080
 - **Database**: MySQL (metadata storage)
-- **Storage**: AWS S3 (zip files of commits)
-- **AI**: Google Gemini 2.0 Flash for commit summarization
 
 ## Architecture
 
 ### Next.js App (`/app`)
 - Dashboard for managing repos and credentials
 - API routes for CRUD operations
-- Excel export functionality
-- Real-time progress tracking via SSE
+- Excel export with 2 sheets:
+  1. **Git Commits**: Raw commit data
+  2. **File Summary**: Changes grouped by file with version history
 
 ### Rust Service (`/rust-service`)
 - Git operations (clone, fetch, log parsing)
-- Diff extraction and analysis
-- Zip file creation
+- Commit extraction and file change tracking
 - High-performance batch processing
 
 ## Database Schema
 ```sql
 -- repositories: Store git repo configs
 -- credentials: Git credentials (encrypted)
--- commits: Parsed commit data
--- summaries: AI-generated summaries
+-- commits: Parsed commit data with file paths
 -- exports: Export job tracking
 ```
 
 ## API Endpoints
 - `POST /api/repos` - Add repository
 - `POST /api/credentials` - Add git credentials
-- `POST /api/analyze` - Start analysis job
+- `POST /api/analyze` - Start analysis job (parses commits)
 - `GET /api/commits` - List commits with filters
-- `POST /api/export` - Generate Excel export
-- `GET /api/export/:id` - Download export
+- `GET /api/authors` - List unique authors
+- `POST /api/export` - Generate Excel export (2 sheets)
 
 ## Environment Variables
 ```
 DATABASE_URL=mysql://user:pass@localhost:3306/git-doc
-S3_BUCKET=git-doc
-S3_REGION=ap-southeast-1
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-GEMINI_API_KEY=
+GEMINI_API_KEY= (optional, for future use)
+GEMINI_API_KEY= (optional, for future use)
 JIRA_API_TOKEN= (optional)
 JIRA_BASE_URL= (optional)
 ```
 
 ## Development
 ```bash
-# Start Next.js
+# Start all services
+./start.sh
+
+# Stop all services
+./stop.sh
+
+# Manual start - Next.js
 pnpm dev
 
-# Build Rust service
+# Manual start - Rust service
 cd rust-service && cargo build --release
-
-# Run Rust service
 ./target/release/git-doc-service
+```
+
+## Export Format
+
+### Sheet 1: Git Commits
+| Date Time | Repository | Commit Name | Commit Description | Commit Code | Changed Files | Files Count | JIRA Link | Author |
+
+### Sheet 2: File Summary
+Groups all changes by file path showing version history:
+```
+File: /src/app/page.tsx
+Changes:
+  27/12/2025
+  - feat: add new component
+  - fix: button styling
+
+  25/12/2025
+  - initial page setup
 ```

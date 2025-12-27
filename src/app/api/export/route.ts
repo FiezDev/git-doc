@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
 import ExcelJS from 'exceljs'
 import { format } from 'date-fns'
+import { writeFile, mkdir } from 'fs/promises'
+import path from 'path'
 
 const exportSchema = z.object({
   startDate: z.string().optional(),
@@ -48,7 +50,7 @@ export async function POST(request: NextRequest) {
       include: {
         repository: { select: { name: true, url: true } },
       },
-      orderBy: { commitDate: 'desc' },
+      orderBy: { commitDate: 'asc' }, // Oldest first for file history
     })
 
     // Create Excel workbook
@@ -56,53 +58,154 @@ export async function POST(request: NextRequest) {
     workbook.creator = 'Git Work Summarizer'
     workbook.created = new Date()
 
-    const worksheet = workbook.addWorksheet('Git Commits', {
+    // ========== Sheet 1: File Summary (changes by file) ==========
+    const fileSummarySheet = workbook.addWorksheet('File Summary', {
       views: [{ state: 'frozen', ySplit: 1 }],
     })
 
-    // Define columns matching the simplified requirements
-    worksheet.columns = [
-      { header: 'Date Time', key: 'dateTime', width: 20 },
-      { header: 'Repository', key: 'repository', width: 25 },
-      { header: 'Summary of Change', key: 'summary', width: 60 },
-      { header: 'Commit Name', key: 'commitName', width: 40 },
-      { header: 'Commit Description', key: 'commitDesc', width: 50 },
-      { header: 'Commit Code', key: 'commitCode', width: 15 },
-      { header: 'Changed Files', key: 'changedFiles', width: 50 },
-      { header: 'Files Count', key: 'filesCount', width: 12 },
-      { header: 'JIRA Link', key: 'jiraLink', width: 30 },
-      { header: 'Author', key: 'author', width: 25 },
+    fileSummarySheet.columns = [
+      { header: 'File', key: 'file', width: 50 },
+      { header: 'Change History', key: 'changes', width: 80 },
     ]
 
     // Style header row
-    worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }
-    worksheet.getRow(1).fill = {
+    fileSummarySheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }
+    fileSummarySheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF2E7D32' }, // Green header
+    }
+
+    // Build file history: Map<filePath, Array<{date, changes}>>
+    const fileHistory = new Map<string, Array<{ date: string; changes: string[] }>>()
+
+    // Helper to check if commit is a merge commit
+    const isMergeCommit = (message: string) => {
+      const lowerMsg = message.toLowerCase()
+      return lowerMsg.startsWith('merge commit') ||
+             lowerMsg.startsWith('merge pull request') ||
+             lowerMsg.startsWith('merge branch') ||
+             lowerMsg.startsWith("merge remote-tracking")
+    }
+
+    // Helper to clean commit message
+    const cleanMessage = (message: string) => {
+      return message
+        .replace(/Ayay sir/gi, '')  // Remove "Ayay sir" text
+        .replace(/\n+/g, ' ')       // Replace newlines with spaces
+        .replace(/\s+/g, ' ')       // Collapse multiple spaces
+        .trim()
+    }
+
+    for (const commit of commits) {
+      if (!commit.changedPaths) continue
+      
+      // Skip merge commits in file summary
+      const rawMessage = commit.message || commit.messageTitle || ''
+      if (isMergeCommit(rawMessage)) continue
+      
+      // Use full message, cleaned up
+      const changeDesc = cleanMessage(rawMessage)
+      if (!changeDesc) continue  // Skip if message is empty after cleaning
+      
+      const files = commit.changedPaths.split('\n').filter(Boolean)
+      const commitDate = format(commit.commitDate, 'dd/MM/yyyy')
+
+      for (const filePath of files) {
+        if (!fileHistory.has(filePath)) {
+          fileHistory.set(filePath, [])
+        }
+        
+        const history = fileHistory.get(filePath)!
+        // Find or create date entry
+        let dateEntry = history.find(h => h.date === commitDate)
+        if (!dateEntry) {
+          dateEntry = { date: commitDate, changes: [] }
+          history.push(dateEntry)
+        }
+        dateEntry.changes.push(`- ${changeDesc}`)
+      }
+    }
+
+    // Sort files alphabetically and add to sheet
+    const sortedFiles = Array.from(fileHistory.entries()).sort((a, b) => 
+      a[0].localeCompare(b[0])
+    )
+
+    for (const [filePath, history] of sortedFiles) {
+      // Sort history by date (newest first for display)
+      const sortedHistory = [...history].sort((a, b) => {
+        const [dayA, monthA, yearA] = a.date.split('/').map(Number)
+        const [dayB, monthB, yearB] = b.date.split('/').map(Number)
+        const dateA = new Date(yearA, monthA - 1, dayA)
+        const dateB = new Date(yearB, monthB - 1, dayB)
+        return dateB.getTime() - dateA.getTime()
+      })
+
+      // Format change history as multi-line text
+      const changeText = sortedHistory.map(h => 
+        `${h.date}\n${h.changes.join('\n')}`
+      ).join('\n\n')
+
+      fileSummarySheet.addRow({
+        file: filePath,
+        changes: changeText,
+      })
+    }
+
+    // Style file summary rows
+    fileSummarySheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        row.alignment = { vertical: 'top', wrapText: true }
+        // Calculate row height based on content
+        const changesCell = row.getCell('changes')
+        const lineCount = String(changesCell.value || '').split('\n').length
+        row.height = Math.max(20, lineCount * 15)
+      }
+    })
+
+    // ========== Sheet 2: Git Commits (raw data) ==========
+    const commitsSheet = workbook.addWorksheet('Git Commits', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    })
+
+    commitsSheet.columns = [
+      { header: 'Date Time', key: 'dateTime', width: 20 },
+      { header: 'Repository', key: 'repository', width: 25 },
+      { header: 'Commit Name', key: 'commitName', width: 50 },
+      { header: 'Commit Description', key: 'commitDesc', width: 60 },
+      { header: 'Commit Code', key: 'commitCode', width: 12 },
+      { header: 'Changed Files', key: 'changedFiles', width: 50 },
+      { header: 'Files Count', key: 'filesCount', width: 12 },
+      { header: 'JIRA Link', key: 'jiraLink', width: 30 },
+      { header: 'Author', key: 'author', width: 30 },
+    ]
+
+    // Style header row
+    commitsSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }
+    commitsSheet.getRow(1).fill = {
       type: 'pattern',
       pattern: 'solid',
       fgColor: { argb: 'FF4472C4' },
     }
 
-    // Add data rows
-    for (const commit of commits) {
-      // Format changed files list (newline separated from changedPaths)
-      const changedFilesList = commit.changedPaths || ''
-
-      worksheet.addRow({
+    // Add commit rows (newest first for this sheet)
+    const sortedCommits = [...commits].reverse()
+    for (const commit of sortedCommits) {
+      commitsSheet.addRow({
         dateTime: format(commit.commitDate, 'yyyy-MM-dd HH:mm:ss'),
         repository: commit.repository.name,
-        summary: commit.summary || 'Pending analysis...',
         commitName: commit.messageTitle,
         commitDesc: commit.message,
-        commitCode: commit.sha.substring(0, 8), // Short SHA as reference code
-        changedFiles: changedFilesList,
+        commitCode: commit.sha.substring(0, 8),
+        changedFiles: commit.changedPaths || '',
         filesCount: commit.filesChanged,
         jiraLink: commit.jiraUrl || '',
         author: `${commit.authorName} <${commit.authorEmail}>`,
       })
     }
 
-    // Auto-fit rows and enable text wrap
-    worksheet.eachRow((row, rowNumber) => {
+    commitsSheet.eachRow((row, rowNumber) => {
       if (rowNumber > 1) {
         row.alignment = { vertical: 'top', wrapText: true }
       }
@@ -111,6 +214,13 @@ export async function POST(request: NextRequest) {
     // Generate buffer
     const buffer = await workbook.xlsx.writeBuffer()
     const fileName = `git-summary-${format(new Date(), 'yyyy-MM-dd-HHmmss')}.xlsx`
+
+    // Save file to exports folder in root
+    const exportsDir = path.join(process.cwd(), 'exports')
+    await mkdir(exportsDir, { recursive: true })
+    const filePath = path.join(exportsDir, fileName)
+    await writeFile(filePath, Buffer.from(buffer))
+    console.log(`Export saved to: ${filePath}`)
 
     // Record the export
     await prisma.exportJob.create({
