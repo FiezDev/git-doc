@@ -102,7 +102,7 @@ export async function DELETE(
     // Check if repository exists
     const repository = await prisma.repository.findUnique({
       where: { id },
-      include: { _count: { select: { commits: true, analysisJobs: true } } },
+      include: { _count: { select: { commits: true } } },
     })
 
     if (!repository) {
@@ -110,10 +110,7 @@ export async function DELETE(
     }
 
     // Delete related data first (cascading delete)
-    // Delete commits and their changed files
-    await prisma.changedFile.deleteMany({
-      where: { commit: { repositoryId: id } },
-    })
+    // Delete commits
     await prisma.commit.deleteMany({
       where: { repositoryId: id },
     })

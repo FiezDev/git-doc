@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getSignedDownloadUrl } from '@/lib/s3'
 
 // GET - List commits with filters
 export async function GET(request: NextRequest) {
@@ -39,7 +38,6 @@ export async function GET(request: NextRequest) {
         where,
         include: {
           repository: { select: { id: true, name: true } },
-          changedFiles: { select: { filePath: true, changeType: true } },
         },
         orderBy: { commitDate: 'desc' },
         skip: (page - 1) * limit,
@@ -48,23 +46,8 @@ export async function GET(request: NextRequest) {
       prisma.commit.count({ where }),
     ])
 
-    // Generate signed URLs for zip files
-    const commitsWithUrls = await Promise.all(
-      commits.map(async (commit) => {
-        let zipUrl = null
-        if (commit.zipFileKey) {
-          try {
-            zipUrl = await getSignedDownloadUrl(commit.zipFileKey)
-          } catch (err) {
-            console.error('Failed to generate signed URL:', err)
-          }
-        }
-        return { ...commit, zipUrl }
-      })
-    )
-
     return NextResponse.json({
-      commits: commitsWithUrls,
+      commits,
       total,
       page,
       limit,

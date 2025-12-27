@@ -11,20 +11,7 @@ pub struct ParsedCommit {
     pub message: String,
     pub message_title: String,
     pub files_changed: usize,
-    pub insertions: usize,
-    pub deletions: usize,
-    pub diff_summary: String,
-    pub changed_files: Vec<ChangedFile>,
-    pub zip_size: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChangedFile {
-    pub path: String,
-    pub change_type: String, // ADDED, MODIFIED, DELETED, RENAMED
-    pub additions: usize,
-    pub deletions: usize,
-    pub patch: Option<String>,
+    pub changed_paths: String, // Comma-separated list of file paths
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

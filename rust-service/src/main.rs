@@ -8,23 +8,26 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::mysql::MySqlPoolOptions;
-use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod git;
 mod models;
-mod s3;
-mod zip_creator;
 
 use git::GitProcessor;
-use s3::S3Client;
 
-// Helper to sanitize strings for MySQL (remove null bytes and limit size)
+// Helper to sanitize strings for MySQL (remove null bytes, control chars, and ensure valid UTF-8)
 fn sanitize_for_mysql(s: &str, max_len: usize) -> String {
     let cleaned: String = s.chars()
-        .filter(|c| *c != '\0') // Remove null bytes
+        .filter(|c| {
+            // Keep printable ASCII, newlines, tabs, and common unicode
+            // Remove null bytes and other problematic control characters
+            let code = *c as u32;
+            *c == '\n' || *c == '\r' || *c == '\t' || 
+            (code >= 0x20 && code < 0x7F) || // Printable ASCII
+            (code >= 0x80 && code < 0xFFFF) // Common unicode (excluding surrogates)
+        })
         .take(max_len)
         .collect();
     cleaned
@@ -33,7 +36,6 @@ fn sanitize_for_mysql(s: &str, max_len: usize) -> String {
 #[derive(Clone)]
 pub struct AppState {
     pub db: sqlx::MySqlPool,
-    pub s3: Arc<S3Client>,
     pub work_dir: String,
 }
 
@@ -54,27 +56,28 @@ async fn main() -> Result<()> {
     // Create work directory
     std::fs::create_dir_all(&work_dir)?;
 
-    // Connect to database
+    // Connect to database with proper settings
+    // Use smaller pool to avoid connection issues
     let pool = MySqlPoolOptions::new()
-        .max_connections(10)
+        .max_connections(2)
+        .min_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(60))
+        .idle_timeout(std::time::Duration::from_secs(120))
+        .max_lifetime(std::time::Duration::from_secs(300))
+        .test_before_acquire(true) // Always test connection before using
         .connect(&database_url)
         .await?;
 
     tracing::info!("Connected to MySQL database");
 
-    // Initialize S3 client
-    let s3 = Arc::new(S3Client::new().await);
-
     let state = AppState {
         db: pool,
-        s3,
         work_dir,
     };
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/analyze", post(analyze_repository))
-        .route("/webhook/commit", post(process_commit_webhook))
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -151,29 +154,36 @@ async fn analyze_repository(
 }
 
 async fn process_analysis(state: AppState, request: AnalyzeRequest) -> Result<()> {
-    let processor = GitProcessor::new(&state.work_dir, state.s3.clone());
+    let processor = GitProcessor::new(&state.work_dir);
 
     // Clone or fetch repository
+    tracing::info!("Cloning/fetching repository...");
     let repo_path = processor.clone_or_fetch(
         &request.repo_url,
         &request.branch,
         request.credential_token.as_deref(),
     )?;
+    tracing::info!("Repository ready at {:?}", repo_path);
 
     // Update status to PARSING
+    tracing::info!("Updating status to PARSING...");
     sqlx::query("UPDATE AnalysisJob SET status = 'PARSING' WHERE id = ?")
         .bind(&request.job_id)
         .execute(&state.db)
         .await?;
+    tracing::info!("Status updated to PARSING");
 
     // Get repository ID from job
+    tracing::info!("Getting repository ID...");
     let row: (String,) = sqlx::query_as("SELECT repositoryId FROM AnalysisJob WHERE id = ?")
         .bind(&request.job_id)
         .fetch_one(&state.db)
         .await?;
     let repository_id = row.0;
+    tracing::info!("Repository ID: {}", repository_id);
 
     // Parse commits
+    tracing::info!("Parsing commits...");
     let commits = processor.parse_commits(
         &repo_path,
         request.start_date.as_deref(),
@@ -182,15 +192,42 @@ async fn process_analysis(state: AppState, request: AnalyzeRequest) -> Result<()
     )?;
 
     let total_commits = commits.len();
+    tracing::info!("Found {} commits to process", total_commits);
 
     // Update total commits count
-    sqlx::query("UPDATE AnalysisJob SET totalCommits = ? WHERE id = ?")
+    tracing::info!("Updating total commits count...");
+    match sqlx::query("UPDATE AnalysisJob SET totalCommits = ? WHERE id = ?")
         .bind(total_commits as i32)
+        .bind(&request.job_id)
         .execute(&state.db)
-        .await?;
+        .await
+    {
+        Ok(result) => tracing::info!("Total commits count updated, rows affected: {}", result.rows_affected()),
+        Err(e) => {
+            tracing::error!("Failed to update total commits: {:?}", e);
+            return Err(e.into());
+        }
+    }
+
+    // Sleep briefly to let connection settle
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Test a simple query first
+    tracing::debug!("Testing connection with simple query...");
+    match sqlx::query_as::<_, (i64,)>("SELECT 1")
+        .fetch_one(&state.db)
+        .await
+    {
+        Ok(_) => tracing::debug!("Connection test passed"),
+        Err(e) => {
+            tracing::error!("Connection test failed: {:?}", e);
+            return Err(e.into());
+        }
+    }
 
     // Process each commit
     for (idx, commit) in commits.iter().enumerate() {
+        tracing::debug!("Checking if commit {} exists...", &commit.sha[..8]);
         // Check if commit already exists
         let existing: Option<(String,)> = sqlx::query_as(
             "SELECT id FROM Commit WHERE repositoryId = ? AND sha = ?",
@@ -199,16 +236,14 @@ async fn process_analysis(state: AppState, request: AnalyzeRequest) -> Result<()
         .bind(&commit.sha)
         .fetch_optional(&state.db)
         .await?;
+        tracing::debug!("Commit exists check completed for {}", &commit.sha[..8]);
 
         if existing.is_some() {
             tracing::debug!("Commit {} already exists, skipping", commit.sha);
             continue;
         }
 
-        // Create zip file of changed files
-        let zip_key = processor
-            .create_commit_zip(&repo_path, &repository_id, commit)
-            .await?;
+        tracing::info!("Processing commit {} ({}/{})", &commit.sha[..8], idx + 1, total_commits);
 
         // Extract JIRA ticket from commit message
         let jira_key = extract_jira_key(&commit.message);
@@ -221,54 +256,39 @@ async fn process_analysis(state: AppState, request: AnalyzeRequest) -> Result<()
             })
             .flatten();
 
-        // Insert commit
+        // Log data sizes for debugging
+        let msg_len = commit.message.len();
+        let title_len = commit.message_title.len();
+        let paths_len = commit.changed_paths.len();
+        tracing::debug!("Commit data sizes - message: {}, title: {}, paths: {}", msg_len, title_len, paths_len);
+
+        // Insert commit (simplified - no diff details, just file paths)
+        tracing::debug!("Inserting commit...");
         sqlx::query(
             r#"
             INSERT INTO Commit (
                 id, repositoryId, sha, authorName, authorEmail, commitDate,
-                message, messageTitle, filesChanged, insertions, deletions,
-                diffSummary, zipFileKey, zipFileSize, jiraKey, jiraUrl,
-                summaryStatus, createdAt, updatedAt
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NOW(), NOW())
+                message, messageTitle, filesChanged, changedPaths,
+                jiraKey, jiraUrl, summaryStatus, createdAt, updatedAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NOW(), NOW())
             "#,
         )
         .bind(&commit.id)
         .bind(&repository_id)
         .bind(&commit.sha)
-        .bind(&commit.author_name)
-        .bind(&commit.author_email)
+        .bind(sanitize_for_mysql(&commit.author_name, 500))
+        .bind(sanitize_for_mysql(&commit.author_email, 500))
         .bind(&commit.commit_date)
         .bind(sanitize_for_mysql(&commit.message, 65000))
         .bind(sanitize_for_mysql(&commit.message_title, 500))
         .bind(commit.files_changed as i32)
-        .bind(commit.insertions as i32)
-        .bind(commit.deletions as i32)
-        .bind(sanitize_for_mysql(&commit.diff_summary, 65000))
-        .bind(&zip_key)
-        .bind(commit.zip_size.map(|s| s as i32))
+        .bind(sanitize_for_mysql(&commit.changed_paths, 65000))
         .bind(&jira_key)
         .bind(&jira_url)
         .execute(&state.db)
         .await?;
 
-        // Insert changed files
-        for file in &commit.changed_files {
-            sqlx::query(
-                r#"
-                INSERT INTO ChangedFile (id, commitId, filePath, changeType, additions, deletions, patch)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind(uuid::Uuid::new_v4().to_string())
-            .bind(&commit.id)
-            .bind(sanitize_for_mysql(&file.path, 1000))
-            .bind(&file.change_type)
-            .bind(file.additions as i32)
-            .bind(file.deletions as i32)
-            .bind(file.patch.as_ref().map(|p| sanitize_for_mysql(p, 65000)))
-            .execute(&state.db)
-            .await?;
-        }
+        tracing::debug!("Inserted commit record");
 
         // Update progress
         sqlx::query("UPDATE AnalysisJob SET processedCommits = ? WHERE id = ?")
@@ -302,18 +322,4 @@ async fn process_analysis(state: AppState, request: AnalyzeRequest) -> Result<()
 fn extract_jira_key(message: &str) -> Option<String> {
     let re = regex::Regex::new(r"([A-Z][A-Z0-9]+-\d+)").ok()?;
     re.find(message).map(|m| m.as_str().to_string())
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CommitWebhook {
-    pub repository_id: String,
-    pub commit_sha: String,
-}
-
-async fn process_commit_webhook(
-    State(_state): State<AppState>,
-    Json(_webhook): Json<CommitWebhook>,
-) -> impl IntoResponse {
-    // Handle real-time commit processing via webhooks
-    Json(serde_json::json!({ "status": "received" }))
 }

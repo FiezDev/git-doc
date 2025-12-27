@@ -70,12 +70,9 @@ fi
 # Create logs directory
 mkdir -p logs
 
-# Clear old rust service logs but keep start script output separate
-> logs/rust-service.log
-
-# Start Rust backend
+# Start Rust backend (output to separate file)
 echo -e "\n${YELLOW}🚀 Starting Rust backend (port 8080)...${NC}"
-./rust-service/target/release/git-doc-service > logs/rust-service.log 2>&1 &
+./rust-service/target/release/git-doc-service >> logs/rust-app.log 2>&1 &
 RUST_PID=$!
 echo -e "${GREEN}   ✓ Rust backend started (PID: $RUST_PID)${NC}"
 
@@ -119,7 +116,7 @@ echo -e "\n${BLUE}Frontend:${NC} http://localhost:3000"
 echo -e "${BLUE}Backend:${NC}  http://localhost:8080"
 echo -e "\n${YELLOW}Logs:${NC}"
 echo -e "  - Next.js: tail -f logs/next.log"
-echo -e "  - Rust:    tail -f logs/rust-service.log"
+echo -e "  - Rust:    tail -f logs/rust-app.log"
 echo -e "\n${YELLOW}To stop:${NC} ./stop.sh or press Ctrl+C"
 echo ""
 

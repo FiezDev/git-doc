@@ -165,7 +165,7 @@ export default function AnalyzePage() {
 
         <button
           onClick={handleAnalyze}
-          disabled={loading || !selectedRepo || (job && !['COMPLETED', 'FAILED'].includes(job.status))}
+          disabled={loading || !selectedRepo || Boolean(job && !['COMPLETED', 'FAILED'].includes(job.status))}
           className="w-full px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50"
         >
           {loading ? 'Starting...' : '🔍 Start Analysis'}

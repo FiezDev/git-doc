@@ -60,30 +60,22 @@ model Commit {
   authorEmail   String
   commitDate    DateTime
   message       String     @db.Text // Full commit message
-  messageTitle  String     // First line of commit message
+  messageTitle  String     // First line of commit message (commit name)
   
-  // Parsed data
+  // File info (comma-separated list of changed files)
   filesChanged  Int        @default(0)
-  insertions    Int        @default(0)
-  deletions     Int        @default(0)
-  diffSummary   String?    @db.MediumText // Raw diff stats
+  changedPaths  String?    @db.Text // List of file paths that changed
   
   // AI-generated content
-  summary       String?    @db.Text // Human-readable summary
+  summary       String?    @db.Text // Human-readable summary of what changed
   summaryStatus SummaryStatus @default(PENDING)
-  
-  // Related assets
-  zipFileKey    String?    // S3 key for zip of changed files
-  zipFileSize   Int?       // Size in bytes
   
   // Optional integrations
   jiraKey       String?    // Extracted JIRA ticket (e.g., PROJ-123)
-  jiraUrl       String?    // Full JIRA URL
+  jiraUrl       String?    // Full JIRA URL (editable in UI)
   
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
-  
-  changedFiles  ChangedFile[]
   
   @@unique([repositoryId, sha])
   @@index([repositoryId, commitDate])
@@ -96,30 +88,6 @@ enum SummaryStatus {
   PROCESSING
   COMPLETED
   FAILED
-}
-
-// Individual files changed in a commit
-model ChangedFile {
-  id         String    @id @default(cuid())
-  commitId   String
-  commit     Commit    @relation(fields: [commitId], references: [id], onDelete: Cascade)
-  
-  filePath   String    @db.VarChar(500)
-  changeType ChangeType
-  additions  Int       @default(0)
-  deletions  Int       @default(0)
-  patch      String?   @db.MediumText // Actual diff content
-  
-  @@index([commitId])
-  @@index([filePath(length: 255)])
-}
-
-enum ChangeType {
-  ADDED
-  MODIFIED
-  DELETED
-  RENAMED
-  COPIED
 }
 
 // Export job tracking

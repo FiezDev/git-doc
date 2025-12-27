@@ -2,22 +2,17 @@ use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use git2::{Cred, DiffOptions, FetchOptions, RemoteCallbacks, Repository};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use crate::models::{ChangedFile, ParsedCommit};
-use crate::s3::S3Client;
-use crate::zip_creator;
+use crate::models::ParsedCommit;
 
 pub struct GitProcessor {
     work_dir: PathBuf,
-    s3: Arc<S3Client>,
 }
 
 impl GitProcessor {
-    pub fn new(work_dir: &str, s3: Arc<S3Client>) -> Self {
+    pub fn new(work_dir: &str) -> Self {
         Self {
             work_dir: PathBuf::from(work_dir),
-            s3,
         }
     }
 
@@ -171,9 +166,8 @@ impl GitProcessor {
             let message = commit.message().unwrap_or("").to_string();
             let message_title = message.lines().next().unwrap_or("").to_string();
 
-            // Get diff stats
-            let (changed_files, insertions, deletions, diff_summary, files) =
-                self.get_commit_diff(&repo, &commit)?;
+            // Get changed file paths (simple list, no diffs)
+            let (files_changed, changed_paths) = self.get_changed_paths(&repo, &commit)?;
 
             commits.push(ParsedCommit {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -183,23 +177,20 @@ impl GitProcessor {
                 commit_date: Utc.timestamp_opt(time, 0).unwrap(),
                 message,
                 message_title,
-                files_changed: changed_files,
-                insertions,
-                deletions,
-                diff_summary,
-                changed_files: files,
-                zip_size: None,
+                files_changed,
+                changed_paths,
             });
         }
 
         Ok(commits)
     }
 
-    fn get_commit_diff(
+    /// Get list of changed file paths for a commit
+    fn get_changed_paths(
         &self,
         repo: &Repository,
         commit: &git2::Commit,
-    ) -> Result<(usize, usize, usize, String, Vec<ChangedFile>)> {
+    ) -> Result<(usize, String)> {
         let tree = commit.tree()?;
         let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
 
@@ -210,12 +201,9 @@ impl GitProcessor {
 
         let stats = diff.stats()?;
         let files_changed = stats.files_changed();
-        let insertions = stats.insertions();
-        let deletions = stats.deletions();
 
-        // Build diff summary
-        let mut summary = String::new();
-        let mut files = Vec::new();
+        // Collect file paths
+        let mut paths: Vec<String> = Vec::new();
 
         diff.foreach(
             &mut |delta, _progress| {
@@ -226,25 +214,7 @@ impl GitProcessor {
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|| "unknown".to_string());
 
-                let change_type = match delta.status() {
-                    git2::Delta::Added => "ADDED",
-                    git2::Delta::Deleted => "DELETED",
-                    git2::Delta::Modified => "MODIFIED",
-                    git2::Delta::Renamed => "RENAMED",
-                    git2::Delta::Copied => "COPIED",
-                    _ => "MODIFIED",
-                };
-
-                summary.push_str(&format!("{}: {}\n", change_type, path));
-
-                files.push(ChangedFile {
-                    path,
-                    change_type: change_type.to_string(),
-                    additions: 0,
-                    deletions: 0,
-                    patch: None,
-                });
-
+                paths.push(path);
                 true
             },
             None,
@@ -252,80 +222,10 @@ impl GitProcessor {
             None,
         )?;
 
-        // Get line counts per file
-        diff.foreach(
-            &mut |_delta, _progress| true,
-            None,
-            None,
-            Some(&mut |delta, _hunk, line| {
-                if let Some(file) = files.iter_mut().find(|f| {
-                    delta
-                        .new_file()
-                        .path()
-                        .map(|p| p.to_string_lossy() == f.path)
-                        .unwrap_or(false)
-                }) {
-                    match line.origin() {
-                        '+' => file.additions += 1,
-                        '-' => file.deletions += 1,
-                        _ => {}
-                    }
-                }
-                true
-            }),
-        )?;
+        // Join paths with newline for storage
+        let changed_paths = paths.join("\n");
 
-        Ok((files_changed, insertions, deletions, summary, files))
-    }
-
-    /// Create a zip file containing all changed files in a commit
-    pub async fn create_commit_zip(
-        &self,
-        repo_path: &Path,
-        repo_id: &str,
-        commit: &ParsedCommit,
-    ) -> Result<Option<String>> {
-        if commit.changed_files.is_empty() {
-            return Ok(None);
-        }
-
-        // Collect file contents synchronously (git2 types aren't Send)
-        let file_contents = {
-            let repo = Repository::open(repo_path)?;
-            let oid = git2::Oid::from_str(&commit.sha)?;
-            let commit_obj = repo.find_commit(oid)?;
-            let tree = commit_obj.tree()?;
-
-            let mut contents = Vec::new();
-            for file in &commit.changed_files {
-                if file.change_type == "DELETED" {
-                    continue;
-                }
-
-                if let Ok(entry) = tree.get_path(Path::new(&file.path)) {
-                    if let Ok(blob) = repo.find_blob(entry.id()) {
-                        contents.push((file.path.clone(), blob.content().to_vec()));
-                    }
-                }
-            }
-            contents
-        }; // git2 types are dropped here before async
-
-        if file_contents.is_empty() {
-            return Ok(None);
-        }
-
-        // Create zip file
-        let zip_buffer = zip_creator::create_zip(&file_contents)?;
-        let zip_size = zip_buffer.len();
-
-        // Upload to S3
-        let key = format!("commits/{}/{}.zip", repo_id, commit.sha);
-        self.s3.upload(&key, zip_buffer, "application/zip").await?;
-
-        tracing::debug!("Uploaded commit zip: {} ({} bytes)", key, zip_size);
-
-        Ok(Some(key))
+        Ok((files_changed, changed_paths))
     }
 }
 
