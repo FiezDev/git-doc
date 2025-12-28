@@ -183,9 +183,10 @@ async fn process_analysis(state: AppState, request: AnalyzeRequest) -> Result<()
     tracing::info!("Repository ID: {}", repository_id);
 
     // Parse commits
-    tracing::info!("Parsing commits...");
+    tracing::info!("Parsing commits from branch: {}...", request.branch);
     let commits = processor.parse_commits(
         &repo_path,
+        &request.branch,
         request.start_date.as_deref(),
         request.end_date.as_deref(),
         request.author_filter.as_deref(),

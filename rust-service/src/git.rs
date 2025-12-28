@@ -113,17 +113,38 @@ impl GitProcessor {
         Ok(())
     }
 
-    /// Parse commits from repository
+    /// Parse commits from repository for a specific branch
     pub fn parse_commits(
         &self,
         repo_path: &Path,
+        branch: &str,
         start_date: Option<&str>,
         end_date: Option<&str>,
         author_filter: Option<&str>,
     ) -> Result<Vec<ParsedCommit>> {
         let repo = Repository::open(repo_path).context("Failed to open repository")?;
+        
+        // Find the branch reference
         let mut revwalk = repo.revwalk()?;
-        revwalk.push_head()?;
+        
+        // Try to find the branch in remote refs first (origin/branch), then local
+        let branch_ref = format!("refs/remotes/origin/{}", branch);
+        let local_ref = format!("refs/heads/{}", branch);
+        
+        if let Ok(reference) = repo.find_reference(&branch_ref) {
+            let oid = reference.target().context("Failed to get branch target")?;
+            revwalk.push(oid)?;
+            tracing::info!("Walking commits from remote branch: {}", branch_ref);
+        } else if let Ok(reference) = repo.find_reference(&local_ref) {
+            let oid = reference.target().context("Failed to get branch target")?;
+            revwalk.push(oid)?;
+            tracing::info!("Walking commits from local branch: {}", local_ref);
+        } else {
+            // Fallback to HEAD
+            tracing::warn!("Branch '{}' not found, falling back to HEAD", branch);
+            revwalk.push_head()?;
+        }
+        
         revwalk.set_sorting(git2::Sort::TIME)?;
 
         let start_ts = start_date

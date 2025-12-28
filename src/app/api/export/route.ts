@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs'
 import { format } from 'date-fns'
 import { writeFile, mkdir } from 'fs/promises'
 import path from 'path'
+import { generateProgressReport } from '@/lib/ai'
 
 const exportSchema = z.object({
   startDate: z.string().optional(),
@@ -58,7 +59,80 @@ export async function POST(request: NextRequest) {
     workbook.creator = 'Git Work Summarizer'
     workbook.created = new Date()
 
-    // ========== Sheet 1: File Summary (changes by file) ==========
+    // ========== Sheet 1: Progress Summary (AI-generated) ==========
+    const summarySheet = workbook.addWorksheet('Summary')
+
+    // Gather data for AI summary
+    const authorNames = [...new Set(commits.map(c => c.authorName))]
+    const repoNames = [...new Set(commits.map(c => c.repository.name))]
+    const commitMessages = commits
+      .map(c => c.message || c.messageTitle || '')
+      .filter(Boolean)
+    
+    const dateRange = {
+      start: data.startDate ? format(new Date(data.startDate), 'MMMM d, yyyy') : 
+             commits.length > 0 ? format(commits[0].commitDate, 'MMMM d, yyyy') : 'N/A',
+      end: data.endDate ? format(new Date(data.endDate), 'MMMM d, yyyy') :
+           commits.length > 0 ? format(commits[commits.length - 1].commitDate, 'MMMM d, yyyy') : 'N/A',
+    }
+
+    const totalFilesChanged = commits.reduce((sum, c) => sum + (c.filesChanged || 0), 0)
+
+    // Generate AI progress report
+    const progressReport = await generateProgressReport({
+      authorNames,
+      dateRange,
+      repositories: repoNames,
+      commitMessages,
+      totalCommits: commits.length,
+      totalFilesChanged,
+    })
+
+    // Style and populate summary sheet
+    summarySheet.columns = [{ key: 'content', width: 100 }]
+    
+    // Add title
+    const titleRow = summarySheet.addRow({ content: 'Development Progress Report' })
+    titleRow.font = { bold: true, size: 18, color: { argb: 'FF1565C0' } }
+    titleRow.height = 30
+
+    // Add date range
+    const dateRow = summarySheet.addRow({ content: `${dateRange.start} - ${dateRange.end}` })
+    dateRow.font = { size: 12, italic: true, color: { argb: 'FF666666' } }
+    
+    // Add blank row
+    summarySheet.addRow({ content: '' })
+
+    // Add stats row
+    const statsRow = summarySheet.addRow({ 
+      content: `Authors: ${authorNames.join(', ')}  |  Repositories: ${repoNames.join(', ')}  |  Commits: ${commits.length}  |  Files Changed: ${totalFilesChanged}` 
+    })
+    statsRow.font = { size: 10, color: { argb: 'FF888888' } }
+    
+    // Add separator
+    summarySheet.addRow({ content: '' })
+    const separatorRow = summarySheet.addRow({ content: '─'.repeat(80) })
+    separatorRow.font = { color: { argb: 'FFCCCCCC' } }
+    summarySheet.addRow({ content: '' })
+
+    // Add AI-generated content - split by paragraphs for better formatting
+    const paragraphs = progressReport.split(/\n\n+/)
+    for (const paragraph of paragraphs) {
+      if (paragraph.trim()) {
+        const row = summarySheet.addRow({ content: paragraph.trim() })
+        row.alignment = { wrapText: true, vertical: 'top' }
+        // Calculate row height based on content length
+        const lineCount = Math.ceil(paragraph.length / 90) + paragraph.split('\n').length
+        row.height = Math.max(20, lineCount * 15)
+      }
+    }
+
+    // Style all content cells
+    summarySheet.eachRow((row) => {
+      row.alignment = { ...row.alignment, wrapText: true }
+    })
+
+    // ========== Sheet 2: File Summary (changes by file) ==========
     const fileSummarySheet = workbook.addWorksheet('File Summary', {
       views: [{ state: 'frozen', ySplit: 1 }],
     })
@@ -164,7 +238,7 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    // ========== Sheet 2: Git Commits (raw data) ==========
+    // ========== Sheet 3: Git Commits (raw data) ==========
     const commitsSheet = workbook.addWorksheet('Git Commits', {
       views: [{ state: 'frozen', ySplit: 1 }],
     })
