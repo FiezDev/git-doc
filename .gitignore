@@ -4,6 +4,10 @@ node_modules/
 .env.local
 *.log
 
+# PID files (runtime)
+.next.pid
+.rust.pid
+
 # Rust
 rust-service/target/
 
