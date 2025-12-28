@@ -7,6 +7,7 @@ const analyzeSchema = z.object({
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   authorFilter: z.string().optional(),
+  allBranches: z.boolean().optional(),
 })
 
 // POST - Start analysis job
@@ -58,6 +59,7 @@ export async function POST(request: NextRequest) {
         startDate: data.startDate,
         endDate: data.endDate,
         authorFilter: data.authorFilter,
+        allBranches: data.allBranches,
       }),
     })
       .then((res) => {

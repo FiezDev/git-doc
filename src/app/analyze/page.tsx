@@ -33,6 +33,7 @@ export default function AnalyzePage() {
   const [endDate, setEndDate] = useState('')
   const [selectedAuthors, setSelectedAuthors] = useState<string[]>([])
   const [authors, setAuthors] = useState<Author[]>([])
+  const [allBranches, setAllBranches] = useState(false)
   const [loading, setLoading] = useState(false)
   const [job, setJob] = useState<AnalysisJob | null>(null)
 
@@ -99,6 +100,7 @@ export default function AnalyzePage() {
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           authorFilter: selectedAuthors.length > 0 ? selectedAuthors.join(',') : undefined,
+          allBranches: allBranches || undefined,
         }),
       })
 
@@ -233,6 +235,20 @@ export default function AnalyzePage() {
               {selectedAuthors.length} author(s) selected
             </p>
           )}
+        </div>
+
+        <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <input
+            type="checkbox"
+            id="allBranches"
+            checked={allBranches}
+            onChange={(e) => setAllBranches(e.target.checked)}
+            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+          />
+          <label htmlFor="allBranches" className="text-sm text-gray-700">
+            <span className="font-medium">Search all branches</span>
+            <span className="text-gray-500 ml-1">(include commits from all branches, not just the default branch)</span>
+          </label>
         </div>
 
         <button

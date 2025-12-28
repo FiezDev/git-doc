@@ -19,3 +19,5 @@ rust-service/target/
 # OS
 .DS_Store
 Thumbs.db
+exports
+reports

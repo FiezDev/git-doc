@@ -23,9 +23,8 @@ export default function NewExportPage() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<{
     exportId: string
-    fileName: string
-    rowCount: number
-    downloadUrl: string
+    files: Array<{ fileName: string; filePath: string; fileSize: number }>
+    totalCommits: number
   } | null>(null)
 
   useEffect(() => {
@@ -81,31 +80,15 @@ export default function NewExportPage() {
         }),
       })
 
-      if (res.ok) {
-        // Get filename from Content-Disposition header
-        const contentDisposition = res.headers.get('Content-Disposition')
-        const filenameMatch = contentDisposition?.match(/filename="(.+)"/)
-        const fileName = filenameMatch ? filenameMatch[1] : `git-summary-${new Date().toISOString().slice(0, 10)}.xlsx`
+      const data = await res.json()
 
-        // Download the Excel file blob
-        const blob = await res.blob()
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = fileName
-        document.body.appendChild(a)
-        a.click()
-        window.URL.revokeObjectURL(url)
-        document.body.removeChild(a)
-
+      if (res.ok && data.success) {
         setResult({
-          exportId: 'downloaded',
-          fileName,
-          rowCount: 0, // We don't know the exact count from blob
-          downloadUrl: '',
+          exportId: data.exportId,
+          files: data.files,
+          totalCommits: data.totalCommits,
         })
       } else {
-        const data = await res.json()
         alert(data.error || 'Export failed')
       }
     } catch (err) {
@@ -255,11 +238,47 @@ export default function NewExportPage() {
       </div>
 
       {result && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-6">
-          <h2 className="text-lg font-medium text-green-800 mb-4">✅ Export Downloaded!</h2>
-          <p className="text-sm text-green-700">
-            File <strong>{result.fileName}</strong> has been downloaded to your computer.
-          </p>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
+            <div className="text-center mb-4">
+              <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+                <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-semibold text-gray-900">Export Complete!</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                {result.totalCommits} commits exported to {result.files.length} file{result.files.length > 1 ? 's' : ''}
+              </p>
+            </div>
+            
+            <div className="bg-gray-50 rounded-lg p-4 mb-4">
+              <h3 className="text-sm font-medium text-gray-700 mb-2">Generated Files:</h3>
+              <ul className="space-y-2">
+                {result.files.map((file, idx) => (
+                  <li key={idx} className="flex items-center justify-between text-sm">
+                    <span className="text-gray-800 font-mono truncate flex-1 mr-2">
+                      📄 {file.fileName}
+                    </span>
+                    <span className="text-gray-500 text-xs">
+                      {(file.fileSize / 1024).toFixed(1)} KB
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            
+            <div className="text-xs text-gray-500 mb-4 p-2 bg-blue-50 rounded">
+              📁 Files saved to: <code className="text-blue-600">exports/</code> folder
+            </div>
+            
+            <button
+              onClick={() => setResult(null)}
+              className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
+            >
+              Done
+            </button>
+          </div>
         </div>
       )}
 

@@ -22,6 +22,7 @@ impl GitProcessor {
         url: &str,
         branch: &str,
         token: Option<&str>,
+        all_branches: bool,
     ) -> Result<PathBuf> {
         // Generate a unique directory name from URL
         let repo_hash = format!("{:x}", md5::compute(url));
@@ -29,7 +30,7 @@ impl GitProcessor {
 
         if repo_path.exists() {
             tracing::info!("Repository exists, fetching updates: {}", url);
-            self.fetch_updates(&repo_path, branch, token)?;
+            self.fetch_updates(&repo_path, branch, token, all_branches)?;
         } else {
             tracing::info!("Cloning repository: {}", url);
             self.clone_repo(url, &repo_path, branch, token)?;
@@ -78,7 +79,7 @@ impl GitProcessor {
         Ok(())
     }
 
-    fn fetch_updates(&self, path: &Path, branch: &str, token: Option<&str>) -> Result<()> {
+    fn fetch_updates(&self, path: &Path, branch: &str, token: Option<&str>, all_branches: bool) -> Result<()> {
         let repo = Repository::open(path).context("Failed to open repository")?;
 
         let mut callbacks = RemoteCallbacks::new();
@@ -93,27 +94,36 @@ impl GitProcessor {
         fetch_options.remote_callbacks(callbacks);
 
         let mut remote = repo.find_remote("origin").context("Failed to find remote")?;
-        remote
-            .fetch(&[branch], Some(&mut fetch_options), None)
-            .context("Failed to fetch updates")?;
+        
+        if all_branches {
+            // Fetch all branches
+            tracing::info!("Fetching all branches from remote");
+            remote
+                .fetch(&["refs/heads/*:refs/remotes/origin/*"], Some(&mut fetch_options), None)
+                .context("Failed to fetch all branches")?;
+        } else {
+            remote
+                .fetch(&[branch], Some(&mut fetch_options), None)
+                .context("Failed to fetch updates")?;
 
-        // Fast-forward to latest
-        let fetch_head = repo.find_reference("FETCH_HEAD")?;
-        let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
+            // Fast-forward to latest
+            let fetch_head = repo.find_reference("FETCH_HEAD")?;
+            let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
 
-        let refname = format!("refs/heads/{}", branch);
-        if let Ok(mut reference) = repo.find_reference(&refname) {
-            reference.set_target(fetch_commit.id(), "Fast-forward")?;
+            let refname = format!("refs/heads/{}", branch);
+            if let Ok(mut reference) = repo.find_reference(&refname) {
+                reference.set_target(fetch_commit.id(), "Fast-forward")?;
+            }
+
+            repo.checkout_head(Some(
+                git2::build::CheckoutBuilder::default().force(),
+            ))?;
         }
-
-        repo.checkout_head(Some(
-            git2::build::CheckoutBuilder::default().force(),
-        ))?;
 
         Ok(())
     }
 
-    /// Parse commits from repository for a specific branch
+    /// Parse commits from repository for a specific branch or all branches
     pub fn parse_commits(
         &self,
         repo_path: &Path,
@@ -121,28 +131,36 @@ impl GitProcessor {
         start_date: Option<&str>,
         end_date: Option<&str>,
         author_filter: Option<&str>,
+        all_branches: bool,
     ) -> Result<Vec<ParsedCommit>> {
         let repo = Repository::open(repo_path).context("Failed to open repository")?;
         
         // Find the branch reference
         let mut revwalk = repo.revwalk()?;
         
-        // Try to find the branch in remote refs first (origin/branch), then local
-        let branch_ref = format!("refs/remotes/origin/{}", branch);
-        let local_ref = format!("refs/heads/{}", branch);
-        
-        if let Ok(reference) = repo.find_reference(&branch_ref) {
-            let oid = reference.target().context("Failed to get branch target")?;
-            revwalk.push(oid)?;
-            tracing::info!("Walking commits from remote branch: {}", branch_ref);
-        } else if let Ok(reference) = repo.find_reference(&local_ref) {
-            let oid = reference.target().context("Failed to get branch target")?;
-            revwalk.push(oid)?;
-            tracing::info!("Walking commits from local branch: {}", local_ref);
+        if all_branches {
+            // Walk all branches (local and remote)
+            revwalk.push_glob("refs/heads/*")?;
+            revwalk.push_glob("refs/remotes/origin/*")?;
+            tracing::info!("Walking commits from all branches");
         } else {
-            // Fallback to HEAD
-            tracing::warn!("Branch '{}' not found, falling back to HEAD", branch);
-            revwalk.push_head()?;
+            // Try to find the branch in remote refs first (origin/branch), then local
+            let branch_ref = format!("refs/remotes/origin/{}", branch);
+            let local_ref = format!("refs/heads/{}", branch);
+            
+            if let Ok(reference) = repo.find_reference(&branch_ref) {
+                let oid = reference.target().context("Failed to get branch target")?;
+                revwalk.push(oid)?;
+                tracing::info!("Walking commits from remote branch: {}", branch_ref);
+            } else if let Ok(reference) = repo.find_reference(&local_ref) {
+                let oid = reference.target().context("Failed to get branch target")?;
+                revwalk.push(oid)?;
+                tracing::info!("Walking commits from local branch: {}", local_ref);
+            } else {
+                // Fallback to HEAD
+                tracing::warn!("Branch '{}' not found, falling back to HEAD", branch);
+                revwalk.push_head()?;
+            }
         }
         
         revwalk.set_sorting(git2::Sort::TIME)?;

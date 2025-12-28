@@ -94,17 +94,46 @@ export interface ProgressReportInput {
   totalFilesChanged: number
 }
 
+// Local fallback summary when AI is unavailable or rate limited
+const buildLocalSummary = (input: ProgressReportInput, reason: string): string => {
+  const authors = input.authorNames.length ? input.authorNames.join(', ') : 'Unknown'
+  const repos = input.repositories.length ? input.repositories.join(', ') : 'N/A'
+  const sampleMessages = [...new Set(input.commitMessages)]
+    .filter((msg) => !!msg)
+    .filter((msg) => !msg.toLowerCase().startsWith('merge '))
+    .slice(0, 8)
+    .map((msg) => `- ${msg.slice(0, 180)}${msg.length > 180 ? '...' : ''}`)
+    .join('\n') || '- No commit samples available'
+
+  return `Development Progress Report
+${input.dateRange.start} - ${input.dateRange.end}
+
+Overview:
+- Authors: ${authors}
+- Repositories: ${repos}
+- Total commits: ${input.totalCommits}
+- Files changed: ${input.totalFilesChanged}
+
+Highlights (sample commits):
+${sampleMessages}
+
+Notes:
+- AI summary unavailable (${reason}). This is a local fallback summary.`
+}
+
 export async function generateProgressReport(input: ProgressReportInput): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
     console.warn('GEMINI_API_KEY not set, skipping AI summary')
-    return 'AI summary not available - GEMINI_API_KEY not configured'
+    return buildLocalSummary(input, 'GEMINI_API_KEY not configured')
   }
 
   // Group commit messages and limit to avoid token overflow
   const uniqueMessages = [...new Set(input.commitMessages)]
-    .filter(msg => !msg.toLowerCase().startsWith('merge '))
-    .slice(0, 100)
+    .filter((msg) => !!msg)
+    .filter((msg) => !msg.toLowerCase().startsWith('merge '))
+    .map((msg) => msg.slice(0, 200)) // cap individual length
+    .slice(0, 40) // keep prompt compact to reduce rate-limit risk
 
   const prompt = `You are writing a professional Development Progress Report summary.
 
@@ -148,8 +177,8 @@ Guidelines:
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          maxOutputTokens: 2000,
-          temperature: 0.4,
+          maxOutputTokens: 800, // keep shorter to reduce quota and latency
+          temperature: 0.3,
         },
       }),
     })
@@ -158,16 +187,16 @@ Guidelines:
       const error = await response.text()
       if (response.status === 429 || error.includes('RESOURCE_EXHAUSTED')) {
         console.warn('Gemini API rate limited')
-        return 'AI summary temporarily unavailable - rate limited. Please try again later.'
+        return buildLocalSummary(input, 'Gemini API rate limited')
       }
       console.error('Gemini API error:', error)
-      return 'Unable to generate progress report summary'
+      return buildLocalSummary(input, 'Gemini API error')
     }
 
     const data = await response.json()
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Unable to generate summary'
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || buildLocalSummary(input, 'Empty AI response')
   } catch (error) {
     console.error('Failed to generate progress report:', error)
-    return 'Unable to generate progress report summary'
+    return buildLocalSummary(input, 'Request failed')
   }
 }

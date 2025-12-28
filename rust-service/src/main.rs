@@ -105,6 +105,7 @@ pub struct AnalyzeRequest {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub author_filter: Option<String>,
+    pub all_branches: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -155,6 +156,7 @@ async fn analyze_repository(
 
 async fn process_analysis(state: AppState, request: AnalyzeRequest) -> Result<()> {
     let processor = GitProcessor::new(&state.work_dir);
+    let all_branches = request.all_branches.unwrap_or(false);
 
     // Clone or fetch repository
     tracing::info!("Cloning/fetching repository...");
@@ -162,6 +164,7 @@ async fn process_analysis(state: AppState, request: AnalyzeRequest) -> Result<()
         &request.repo_url,
         &request.branch,
         request.credential_token.as_deref(),
+        all_branches,
     )?;
     tracing::info!("Repository ready at {:?}", repo_path);
 
@@ -183,13 +186,18 @@ async fn process_analysis(state: AppState, request: AnalyzeRequest) -> Result<()
     tracing::info!("Repository ID: {}", repository_id);
 
     // Parse commits
-    tracing::info!("Parsing commits from branch: {}...", request.branch);
+    if all_branches {
+        tracing::info!("Parsing commits from all branches...");
+    } else {
+        tracing::info!("Parsing commits from branch: {}...", request.branch);
+    }
     let commits = processor.parse_commits(
         &repo_path,
         &request.branch,
         request.start_date.as_deref(),
         request.end_date.as_deref(),
         request.author_filter.as_deref(),
+        all_branches,
     )?;
 
     let total_commits = commits.len();
