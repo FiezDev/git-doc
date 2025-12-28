@@ -5,10 +5,9 @@ A tool to summarize your yearly git work across multiple repositories, generatin
 ## Features
 
 - 🔐 **Credential Management** - Store Git credentials (PAT, SSH, OAuth) for private repos
-- 📁 **Multi-Repo Support** - Analyze commits from multiple repositories
+- 📁 **Multi-Repo Support** - Analyze commits from multiple repositories from all branches
 - 🤖 **AI Summaries** - Generate human-readable summaries using OpenAI
 - 📊 **Excel Export** - Export to Excel with all commit details
-- 📦 **Code Zip Files** - Download changed files for each commit
 - 🔗 **JIRA Integration** - Auto-detect and link JIRA tickets
 
 ## Tech Stack
@@ -18,6 +17,7 @@ A tool to summarize your yearly git work across multiple repositories, generatin
 - **Database**: MySQL (via Prisma)
 - **Storage**: AWS S3
 - **AI**: OpenAI GPT-4o-mini
+- **Package Manager**: Bun
 
 ## Excel Output Columns
 
@@ -29,14 +29,13 @@ A tool to summarize your yearly git work across multiple repositories, generatin
 | Commit Name | First line of commit message |
 | Commit Description | Full commit message |
 | Code Change Summary | Files changed with +/- stats |
-| Code Zip Link | S3 presigned URL to download changed files |
 | JIRA Link | Extracted JIRA ticket URL (if found) |
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 18+ (or Bun)
 - Rust (for the backend service)
 - MySQL database
 - AWS S3 bucket
@@ -48,7 +47,7 @@ A tool to summarize your yearly git work across multiple repositories, generatin
    ```bash
    git clone <repo-url>
    cd git-doc
-   pnpm install
+   bun install
    ```
 
 2. **Configure environment**
@@ -59,8 +58,8 @@ A tool to summarize your yearly git work across multiple repositories, generatin
 
 3. **Setup database**
    ```bash
-   pnpm db:push
-   pnpm db:generate
+   bun db:push
+   bun db:generate
    ```
 
 4. **Build Rust service**
@@ -72,7 +71,7 @@ A tool to summarize your yearly git work across multiple repositories, generatin
 5. **Start services**
    ```bash
    # Terminal 1: Start Next.js
-   pnpm dev
+   bun dev
 
    # Terminal 2: Start Rust service
    cd rust-service && cargo run
@@ -85,7 +84,7 @@ A tool to summarize your yearly git work across multiple repositories, generatin
 
 1. **Add Credentials** - Add your GitHub/GitLab PAT for private repo access
 2. **Add Repositories** - Register repos you want to analyze
-3. **Run Analysis** - Parse commits, generate summaries, create zip files
+3. **Run Analysis** - Parse commits and generate summaries
 4. **Export to Excel** - Generate and download the Excel report
 
 ## API Endpoints

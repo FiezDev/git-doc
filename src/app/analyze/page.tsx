@@ -123,7 +123,7 @@ export default function AnalyzePage() {
     <div className="max-w-2xl mx-auto space-y-6">
       <h1 className="text-3xl font-bold text-gray-900">Analyze Repository</h1>
       <p className="text-gray-600">
-        Parse git commits, generate AI summaries, and create zip files for each commit.
+        Parse git commits and generate AI summaries.
       </p>
 
       <div className="bg-white p-6 rounded-lg shadow space-y-4">

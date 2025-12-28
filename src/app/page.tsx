@@ -139,7 +139,7 @@ export default async function HomePage() {
             <span className="flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm">3</span>
             <div className="ml-4">
               <h3 className="text-sm font-medium text-gray-900">Analyze Commits</h3>
-              <p className="text-sm text-gray-500">Run analysis to parse commits, generate AI summaries, and create zip files</p>
+              <p className="text-sm text-gray-500">Run analysis to parse commits and generate AI summaries</p>
             </div>
           </div>
           <div className="flex items-start">

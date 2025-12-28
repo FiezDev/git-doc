@@ -49,12 +49,12 @@ echo -e "${GREEN}   ✓ Old processes killed${NC}"
 # Check if node_modules exists
 if [ ! -d "node_modules" ]; then
     echo -e "\n${YELLOW}📦 Installing Node dependencies...${NC}"
-    pnpm install
+    bun install
 fi
 
 # Check if Prisma client is generated
 echo -e "\n${YELLOW}🗄️  Generating Prisma client...${NC}"
-pnpm db:generate
+bun db:generate
 
 # Build Rust service if needed
 RUST_BINARY="rust-service/target/release/git-doc-service"
@@ -91,7 +91,7 @@ done
 
 # Start Next.js frontend
 echo -e "\n${YELLOW}🌐 Starting Next.js frontend (port 4000)...${NC}"
-pnpm dev -p 4000 > logs/next.log 2>&1 &
+bun dev -p 4000 > logs/next.log 2>&1 &
 NEXT_PID=$!
 echo -e "${GREEN}   ✓ Next.js started (PID: $NEXT_PID)${NC}"
 
