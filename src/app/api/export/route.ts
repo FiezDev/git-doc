@@ -14,6 +14,7 @@ const exportSchema = z.object({
   authorEmail: z.string().optional(), // single author (legacy)
   authorEmails: z.array(z.string()).optional(), // multiple authors
   repoIds: z.array(z.string()).optional(),
+  includeAISummary: z.boolean().optional().default(true),
 })
 
 // POST - Create export and return Excel file directly
@@ -116,51 +117,53 @@ export async function POST(request: NextRequest) {
         end: data.endDate ? format(new Date(data.endDate), 'MMMM d, yyyy') : format(repoCommits[repoCommits.length - 1].commitDate, 'MMMM d, yyyy'),
       }
 
-      // Summary sheet for this repo
-      const summarySheet = workbook.addWorksheet(sanitizeSheetName(`${repoData.repoName} - Summary`))
-      summarySheet.columns = [{ key: 'content', width: 100 }]
+      // Summary sheet for this repo (only if includeAISummary is true)
+      if (data.includeAISummary) {
+        const summarySheet = workbook.addWorksheet(sanitizeSheetName(`${repoData.repoName} - Summary`))
+        summarySheet.columns = [{ key: 'content', width: 100 }]
 
-      const titleRow = summarySheet.addRow({ content: `${repoData.repoName} - Development Progress Report` })
-      titleRow.font = { bold: true, size: 16, color: { argb: 'FF1565C0' } }
-      titleRow.height = 26
+        const titleRow = summarySheet.addRow({ content: `${repoData.repoName} - Development Progress Report` })
+        titleRow.font = { bold: true, size: 16, color: { argb: 'FF1565C0' } }
+        titleRow.height = 26
 
-      const dateRow = summarySheet.addRow({ content: `${dateRange.start} - ${dateRange.end}` })
-      dateRow.font = { size: 12, italic: true, color: { argb: 'FF666666' } }
+        const dateRow = summarySheet.addRow({ content: `${dateRange.start} - ${dateRange.end}` })
+        dateRow.font = { size: 12, italic: true, color: { argb: 'FF666666' } }
 
-      summarySheet.addRow({ content: '' })
+        summarySheet.addRow({ content: '' })
 
-      const statsRow = summarySheet.addRow({
-        content: `Authors: ${authorNames.join(', ')}  |  Commits: ${repoCommits.length}  |  Files Changed: ${totalFilesChanged}`,
-      })
-      statsRow.font = { size: 10, color: { argb: 'FF888888' } }
+        const statsRow = summarySheet.addRow({
+          content: `Authors: ${authorNames.join(', ')}  |  Commits: ${repoCommits.length}  |  Files Changed: ${totalFilesChanged}`,
+        })
+        statsRow.font = { size: 10, color: { argb: 'FF888888' } }
 
-      summarySheet.addRow({ content: '' })
-      const separatorRow = summarySheet.addRow({ content: '─'.repeat(80) })
-      separatorRow.font = { color: { argb: 'FFCCCCCC' } }
-      summarySheet.addRow({ content: '' })
+        summarySheet.addRow({ content: '' })
+        const separatorRow = summarySheet.addRow({ content: '─'.repeat(80) })
+        separatorRow.font = { color: { argb: 'FFCCCCCC' } }
+        summarySheet.addRow({ content: '' })
 
-      const progressReport = await generateProgressReport({
-        authorNames,
-        dateRange,
-        repositories: [repoData.repoName],
-        commitMessages,
-        totalCommits: repoCommits.length,
-        totalFilesChanged,
-      })
+        const progressReport = await generateProgressReport({
+          authorNames,
+          dateRange,
+          repositories: [repoData.repoName],
+          commitMessages,
+          totalCommits: repoCommits.length,
+          totalFilesChanged,
+        })
 
-      const paragraphs = progressReport.split(/\n\n+/)
-      for (const paragraph of paragraphs) {
-        if (paragraph.trim()) {
-          const row = summarySheet.addRow({ content: paragraph.trim() })
-          row.alignment = { wrapText: true, vertical: 'top' }
-          const lineCount = Math.ceil(paragraph.length / 90) + paragraph.split('\n').length
-          row.height = Math.max(20, lineCount * 15)
+        const paragraphs = progressReport.split(/\n\n+/)
+        for (const paragraph of paragraphs) {
+          if (paragraph.trim()) {
+            const row = summarySheet.addRow({ content: paragraph.trim() })
+            row.alignment = { wrapText: true, vertical: 'top' }
+            const lineCount = Math.ceil(paragraph.length / 90) + paragraph.split('\n').length
+            row.height = Math.max(20, lineCount * 15)
+          }
         }
-      }
 
-      summarySheet.eachRow((row) => {
-        row.alignment = { ...row.alignment, wrapText: true }
-      })
+        summarySheet.eachRow((row) => {
+          row.alignment = { ...row.alignment, wrapText: true }
+        })
+      }
 
       // File Summary sheet for this repo
       const fileSummarySheet = workbook.addWorksheet(sanitizeSheetName(`${repoData.repoName} - File Summary`), {

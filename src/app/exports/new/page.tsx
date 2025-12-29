@@ -20,6 +20,7 @@ export default function NewExportPage() {
   const [endDate, setEndDate] = useState('')
   const [selectedAuthors, setSelectedAuthors] = useState<string[]>([])
   const [authors, setAuthors] = useState<Author[]>([])
+  const [includeAISummary, setIncludeAISummary] = useState(true)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<{
     exportId: string
@@ -77,6 +78,7 @@ export default function NewExportPage() {
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           authorEmails: selectedAuthors.length > 0 ? selectedAuthors : undefined,
+          includeAISummary,
         }),
       })
 
@@ -224,8 +226,26 @@ export default function NewExportPage() {
           )}
         </div>
 
+        <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg border">
+          <input
+            type="checkbox"
+            id="includeAISummary"
+            checked={includeAISummary}
+            onChange={(e) => setIncludeAISummary(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-300 text-orange-600 focus:ring-orange-500"
+          />
+          <label htmlFor="includeAISummary" className="text-sm text-gray-700">
+            <span className="font-medium">Include AI Summary</span>
+            <span className="text-gray-500 ml-1">
+              (generates a summary sheet with AI-powered development highlights)
+            </span>
+          </label>
+        </div>
+
         <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
-          📊 Export includes 2 sheets: <strong>Git Commits</strong> (raw data) and <strong>File Summary</strong> (changes per file over time)
+          📊 Export includes {includeAISummary ? '3' : '2'} sheets: 
+          {includeAISummary && <><strong>Summary</strong> (AI overview), </>}
+          <strong>File Summary</strong> (changes per file) and <strong>Git Commits</strong> (raw data)
         </div>
 
         <button
